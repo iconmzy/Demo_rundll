@@ -1,0 +1,12 @@
+﻿C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(538,5): warning MSB8028: 中间目录(x64\Debug\)包含从另一个项目(FFS_FrameGUI.vcxproj)共享的文件。   这会导致错误的清除和重新生成行为。
+  imgui.cpp
+  imgui_demo.cpp
+  imgui_draw.cpp
+  imgui_impl_dx11.cpp
+  imgui_impl_win32.cpp
+  imgui_tables.cpp
+  imgui_widgets.cpp
+  runFrameGUI.cpp
+  正在生成代码...
+MSVCRTD.lib(exe_main.obj) : error LNK2019: 无法解析的外部符号 main，函数 "int __cdecl invoke_main(void)" (?invoke_main@@YAHXZ) 中引用了该符号
+D:\FFS\FFS_FrameGUI\x64\Debug\FFSFrameGUI.exe : fatal error LNK1120: 1 个无法解析的外部命令
