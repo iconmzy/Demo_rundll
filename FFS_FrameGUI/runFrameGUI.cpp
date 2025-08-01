@@ -3,27 +3,36 @@
 #include <d3d11.h>
 #include <tchar.h>
 #include "ImGui/imgui_impl_win32.h"
+#include <algorithm>
+#include <vector>
+#include <string>
 
-// Dear ImGui: standalone example application for DirectX 11
-
-// Learn about Dear ImGui:
-// - FAQ                  https://dearimgui.com/faq
-// - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
-// - Introduction, links and more at the top of imgui.cpp
-
-// #include "imgui.h"
-// #include "imgui_impl_win32.h"
-// #include "imgui_impl_dx11.h"
 
 
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
 static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
 static IDXGISwapChain* g_pSwapChain = nullptr;
+static bool                     g_SwapChainOccluded = false;
 static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
+
+
+
+
+static bool g_DataUpdated = true;  
+static float g_X = 0.0f;
+static float g_Y = 0.0f;
+static float g_Z = 0.0f;
+static int g_FrameRange = 100;
+static int g_FrameCounter = 0;
+
+static std::vector<std::string> g_ErrorFrames;
+static std::vector<float> g_AltHistory;
+static std::vector<float> g_LonHistory; 
+static std::vector<float> g_LatHistory;  
+     
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
@@ -31,300 +40,228 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Main code
-// int main(int, char**)
-// {
-// 	// Create application window
-// 	//ImGui_ImplWin32_EnableDpiAwareness();
-// 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
-// 	::RegisterClassExW(&wc);
-// 	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui DirectX11 Example", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
-// 
-// 	// Initialize Direct3D
-// 	if (!CreateDeviceD3D(hwnd))
-// 	{
-// 		CleanupDeviceD3D();
-// 		::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-// 		return 1;
-// 	}
-// 
-// 	// Show the window
-// 	::ShowWindow(hwnd, SW_SHOWDEFAULT);
-// 	::UpdateWindow(hwnd);
-// 
-// 	// Setup Dear ImGui context
-// 	IMGUI_CHECKVERSION();
-// 	ImGui::CreateContext();
-// 	ImGuiIO& io = ImGui::GetIO(); (void)io;
-// 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-// 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-// 
-// 	// Setup Dear ImGui style
-// 	ImGui::StyleColorsDark();
-// 	//ImGui::StyleColorsLight();
-// 
-// 	// Setup Platform/Renderer backends
-// 	ImGui_ImplWin32_Init(hwnd);
-// 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
-// 
-// 	// Load Fonts
-// 	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-// 	// - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-// 	// - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-// 	// - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-// 	// - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-// 	// - Read 'docs/FONTS.md' for more instructions and details.
-// 	// - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-// 	//io.Fonts->AddFontDefault();
-// 	//io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
-// 	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-// 	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-// 	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-// 	//ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
-// 	//IM_ASSERT(font != nullptr);
-// 
-// 	// Our state
-// 	bool show_demo_window = true;
-// 	bool show_another_window = false;
-// 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-// 
-// 	// Main loop
-// 	bool done = false;
-// 	while (!done)
-// 	{
-// 		// Poll and handle messages (inputs, window resize, etc.)
-// 		// See the WndProc() function below for our to dispatch events to the Win32 backend.
-// 		MSG msg;
-// 		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
-// 		{
-// 			::TranslateMessage(&msg);
-// 			::DispatchMessage(&msg);
-// 			if (msg.message == WM_QUIT)
-// 				done = true;
-// 		}
-// 		if (done)
-// 			break;
-// 
-// 		// Handle window resize (we don't resize directly in the WM_SIZE handler)
-// 		if (g_ResizeWidth != 0 && g_ResizeHeight != 0)
-// 		{
-// 			CleanupRenderTarget();
-// 			g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-// 			g_ResizeWidth = g_ResizeHeight = 0;
-// 			CreateRenderTarget();
-// 		}
-// 
-// 		// Start the Dear ImGui frame
-// 		ImGui_ImplDX11_NewFrame();
-// 		ImGui_ImplWin32_NewFrame();
-// 		ImGui::NewFrame();
-// 
-// 		// 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-// 		if (show_demo_window)
-// 			ImGui::ShowDemoWindow(&show_demo_window);
-// 
-// 		// 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-// 		{
-// 			static float f = 0.0f;
-// 			static int counter = 0;
-// 
-// 			ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-// 
-// 			ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-// 			ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-// 			ImGui::Checkbox("Another Window", &show_another_window);
-// 
-// 			ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-// 			ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-// 
-// 			if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-// 				counter++;
-// 			ImGui::SameLine();
-// 			ImGui::Text("counter = %d", counter);
-// 
-// 			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-// 			ImGui::End();
-// 		}
-// 
-// 		// 3. Show another simple window.
-// 		if (show_another_window)
-// 		{
-// 			ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-// 			ImGui::Text("Hello from another window!");
-// 			if (ImGui::Button("Close Me"))
-// 				show_another_window = false;
-// 			ImGui::End();
-// 		}
-// 
-// 		// Rendering
-// 		ImGui::Render();
-// 		const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-// 		g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-// 		g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
-// 		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-// 
-// 		g_pSwapChain->Present(1, 0); // Present with vsync
-// 		//g_pSwapChain->Present(0, 0); // Present without vsync
-// 	}
-// 
-// 	// Cleanup
-// 	ImGui_ImplDX11_Shutdown();
-// 	ImGui_ImplWin32_Shutdown();
-// 	ImGui::DestroyContext();
-// 
-// 	CleanupDeviceD3D();
-// 	::DestroyWindow(hwnd);
-// 	::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-// 
-// 	return 0;
-// }
 
-// Helper functions
+
+void UpdateData(float x, float y, float z) {
+	g_X = x;
+	g_Y = y;
+	g_Z = z;
+	g_DataUpdated = true;  // 标记数据已更新
+}
 
 
 
 
 
-int draw_gui()
-{
-	// Create application window
-	//ImGui_ImplWin32_EnableDpiAwareness();
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+// 
+LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+		return true;
+
+	switch (msg) {
+	case WM_SIZE:
+		if (wParam == SIZE_MINIMIZED)
+			return 0;
+		g_ResizeWidth = (UINT)LOWORD(lParam);
+		g_ResizeHeight = (UINT)HIWORD(lParam);
+		g_DataUpdated = true;
+		return 0;
+	case WM_MOVE:
+	case WM_PAINT:
+		g_DataUpdated = true;
+		break;
+	case WM_SYSCOMMAND:
+		if ((wParam & 0xfff0) == SC_KEYMENU)
+			return 0;
+		break;
+	case WM_DESTROY:
+		::PostQuitMessage(0);
+		return 0;
+	}
+	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+
+int draw_gui() {
+	// 创建窗口
+	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"FrameImGui", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui DirectX11 Example", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"FrameGui With DirectX11", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
-	// Initialize Direct3D
-	if (!CreateDeviceD3D(hwnd))
-	{
+	// 初始化D3D
+	if (!CreateDeviceD3D(hwnd)) {
 		CleanupDeviceD3D();
 		::UnregisterClassW(wc.lpszClassName, wc.hInstance);
 		return 1;
 	}
 
-	// Show the window
+	// 显示窗口
 	::ShowWindow(hwnd, SW_SHOWDEFAULT);
 	::UpdateWindow(hwnd);
 
-	// Setup Dear ImGui context
+	// 初始化ImGui
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-	// Setup Dear ImGui style
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	ImGui::StyleColorsDark();
-	//ImGui::StyleColorsLight();
-
-	// Setup Platform/Renderer backends
 	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-	// Load Fonts
-	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-	// - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-	// - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-	// - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-	// - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-	// - Read 'docs/FONTS.md' for more instructions and details.
-	// - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-	//io.Fonts->AddFontDefault();
-	//io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-	//ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
-	//IM_ASSERT(font != nullptr);
-
-	// Our state
-	bool show_demo_window = true;
-	bool show_another_window = false;
+	// 主循环变量
+	bool done = false;
+	bool show_statistical_window = true;
+	bool show_draw_window = false;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-	// Main loop
-	bool done = false;
-	while (!done)
-	{
-		// Poll and handle messages (inputs, window resize, etc.)
-		// See the WndProc() function below for our to dispatch events to the Win32 backend.
+	// 主循环
+	while (!done) {
+		// 处理消息
 		MSG msg;
-		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
-		{
+		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
 			::TranslateMessage(&msg);
 			::DispatchMessage(&msg);
 			if (msg.message == WM_QUIT)
 				done = true;
 		}
-		if (done)
-			break;
 
-		// Handle window resize (we don't resize directly in the WM_SIZE handler)
-		if (g_ResizeWidth != 0 && g_ResizeHeight != 0)
-		{
-			CleanupRenderTarget();
-			g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-			g_ResizeWidth = g_ResizeHeight = 0;
-			CreateRenderTarget();
-		}
+		// 按需渲染逻辑
+		if (g_DataUpdated) {
+			g_DataUpdated = false;
 
-		// Start the Dear ImGui frame
-		ImGui_ImplDX11_NewFrame();
-		ImGui_ImplWin32_NewFrame();
-		ImGui::NewFrame();
+			// 处理窗口最小化/遮挡
+			if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
+				::Sleep(10);
+				continue;
+			}
 
-		// 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-		if (show_demo_window)
-			ImGui::ShowDemoWindow(&show_demo_window);
+			// 处理窗口大小调整
+			if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
+				CleanupRenderTarget();
+				g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
+				g_ResizeWidth = g_ResizeHeight = 0;
+				CreateRenderTarget();
+			}
 
-		// 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-		{
-			static float f = 0.0f;
-			static int counter = 0;
+			// 更新数据（示例用随机值，实际应替换为真实数据源）
+			g_X = 0.0f + (rand() % 1800) / 10.0f;
+			g_Y = -90.0f + (rand() % 1800) / 10.0f;
+			g_Z = 500.0f + (rand() % 50) / 10.0f;
 
-			ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+			// 记录历史数据
+			g_LonHistory.push_back(g_X);
+			g_LatHistory.push_back(g_Y);
+			g_AltHistory.push_back(g_Z);
+			g_FrameCounter++;
 
-			ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-			ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-			ImGui::Checkbox("Another Window", &show_another_window);
+			// 移除旧数据
+			while ((int)g_AltHistory.size() > g_FrameRange) {
+				g_AltHistory.erase(g_AltHistory.begin());
+				g_LonHistory.erase(g_LonHistory.begin());
+				g_LatHistory.erase(g_LatHistory.begin());
+			}
 
-			ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-			ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
+			// 开始新帧
+			ImGui_ImplDX11_NewFrame();
+			ImGui_ImplWin32_NewFrame();
+			ImGui::NewFrame();
 
-			if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-				counter++;
-			ImGui::SameLine();
-			ImGui::Text("counter = %d", counter);
+			// 构建界面
+			ImGuiViewport* viewport = ImGui::GetMainViewport();
+			float half_width = viewport->Size.x * 0.5f;
+			float height = viewport->Size.y;
 
-			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+			// 左侧统计窗口
+			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(half_width, height), ImGuiCond_Always);
+			if (ImGui::Begin("Frame Statistics", &show_statistical_window, ImGuiWindowFlags_MenuBar)) {
+				ImGui::BeginChild("StatsPanel", ImVec2(0, 0), true);
+				ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Real-time location");
+				ImGui::Separator();
+
+				if (ImGui::BeginTable("PositionInfo", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit)) {
+					ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+					ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::Text("Longitude");
+					ImGui::TableSetColumnIndex(1);
+					ImGui::Text("%.6f", g_X);
+
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::Text("Latitude");
+					ImGui::TableSetColumnIndex(1);
+					ImGui::Text("%.6f", g_Y);
+
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::Text("Altitude");
+					ImGui::TableSetColumnIndex(1);
+					ImGui::Text("%.2f m", g_Z);
+
+					ImGui::EndTable();
+				}
+
+				ImGui::Spacing();
+				ImGui::Text("rate: %.1f FPS", ImGui::GetIO().Framerate);
+				ImGui::EndChild();
+			}
 			ImGui::End();
-		}
 
-		// 3. Show another simple window.
-		if (show_another_window)
-		{
-			ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-			ImGui::Text("Hello from another window!");
-			if (ImGui::Button("Close Me"))
-				show_another_window = false;
+			// 右侧高度图
+			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
+			if (ImGui::Begin("Altitude Plot", &show_draw_window, ImGuiWindowFlags_MenuBar)) {
+				if (!g_AltHistory.empty()) {
+					struct Funcs {
+						static float RescaleValue(void* data, int idx) {
+							return (*static_cast<std::vector<float>*>(data))[idx];
+						}
+					};
+
+					ImGui::PlotLines(
+						"Altitude (m)",
+						&Funcs::RescaleValue, &g_AltHistory,
+						(int)g_AltHistory.size(),
+						0,
+						nullptr,
+						FLT_MAX, FLT_MAX,
+						ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y * 0.7f)
+					);
+
+					ImGui::Text("Current Altitude: %.2f m", g_Z);
+					ImGui::Text("Frame Count: %d", g_FrameCounter);
+					ImGui::SliderInt("Frame Range", &g_FrameRange, 10, 200, "%d frames");
+				}
+				else {
+					ImGui::Text("Waiting for data...");
+				}
+			}
 			ImGui::End();
+
+			// 渲染
+			ImGui::Render();
+			const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
+			g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+			g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+			// 提交帧
+			g_pSwapChain->Present(1, 0);
 		}
-
-		// Rendering
-		ImGui::Render();
-		const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-		g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-		g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-		g_pSwapChain->Present(1, 0); // Present with vsync
-		//g_pSwapChain->Present(0, 0); // Present without vsync
+		else {
+			// 无数据更新时释放CPU
+			::WaitMessage();
+		}
 	}
 
-	// Cleanup
+	// 清理资源
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
-
 	CleanupDeviceD3D();
 	::DestroyWindow(hwnd);
 	::UnregisterClassW(wc.lpszClassName, wc.hInstance);

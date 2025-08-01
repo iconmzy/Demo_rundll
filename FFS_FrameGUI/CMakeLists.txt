@@ -34,6 +34,11 @@ set(IMGUI_SOURCES
     ImGui/imgui_widgets.cpp
     ImGui/imgui_impl_win32.cpp
     ImGui/imgui_impl_dx11.cpp
+    ImGui/implot.cpp
+    ImGui/implot_items.cpp
+    ImGui/implot3d.cpp
+    ImGui/implot3d_meshes.cpp
+    ImGui/implot3d_items.cpp
 )
 
 
