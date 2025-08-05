@@ -1,11 +1,18 @@
-
+#define FRAMEGUI_EXPORTS 
 #include"framegui.h"
 #include <d3d11.h>
 #include <tchar.h>
 #include "ImGui/imgui_impl_win32.h"
+#include "ImGui/imgui_impl_dx11.h"
+#include "ImGui/imgui.h"
+#include "ImGui/implot.h"
 #include <algorithm>
 #include <vector>
 #include <string>
+#include "glm/glm.hpp"
+#include "glm/gtc/matrix_transform.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "ImGui/ImGuizmo.h"
 
 
 
@@ -21,10 +28,10 @@ static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
 
 
-static bool g_DataUpdated = true;  
+//static bool g_DataUpdated = true;  
 static float g_X = 0.0f;
 static float g_Y = 0.0f;
-static float g_Z = 0.0f;
+static float g_Z = 500.0f;
 static int g_FrameRange = 100;
 static int g_FrameCounter = 0;
 
@@ -32,6 +39,13 @@ static std::vector<std::string> g_ErrorFrames;
 static std::vector<float> g_AltHistory;
 static std::vector<float> g_LonHistory; 
 static std::vector<float> g_LatHistory;  
+
+
+static glm::mat4 earthMatrix = glm::mat4(1.0f); 
+static glm::vec3 currentPos;                    
+static std::vector<glm::vec3> historyPositions; 
+
+
      
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -41,65 +55,144 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 
+std::mutex g_DataMutex;
+
+//make sure auomic operate
+std::atomic<bool> g_GuiRunning(false);
 
 void UpdateData(float x, float y, float z) {
+	std::lock_guard<std::mutex> lock(g_DataMutex);
 	g_X = x;
 	g_Y = y;
 	g_Z = z;
-	g_DataUpdated = true;  // 标记数据已更新
+	//g_DataUpdated = true;
 }
 
 
+glm::vec3 LatLonToSphere(float lat, float lon, float radius = 1.0f) {
+    lat = glm::radians(lat);
+    lon = glm::radians(lon);
+    return glm::vec3(
+        radius * cos(lat) * cos(lon),
+        radius * sin(lat),
+        radius * cos(lat) * sin(lon)
+    );
+}
+
+void DrawEarth(ImDrawList* drawList, const glm::mat4& viewProj) {
+	const float radius = 1.0f;
+	const ImU32 earthColor = IM_COL32(100, 100, 255, 255);
+	const ImU32 gridColor = IM_COL32(80, 80, 200, 255);
 
 
+	const int segments = 24;
+	for (int i = 0; i <= segments; ++i) {
+		float lat = glm::pi<float>() * (i / (float)segments - 0.5f);
+		for (int j = 0; j < segments; ++j) {
+			float lon1 = 2 * glm::pi<float>() * j / segments;
+			float lon2 = 2 * glm::pi<float>() * (j + 1) / segments;
 
-// 
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-		return true;
+			glm::vec3 p1 = LatLonToSphere(glm::degrees(lat), glm::degrees(lon1));
+			glm::vec3 p2 = LatLonToSphere(glm::degrees(lat), glm::degrees(lon2));
 
-	switch (msg) {
-	case WM_SIZE:
-		if (wParam == SIZE_MINIMIZED)
-			return 0;
-		g_ResizeWidth = (UINT)LOWORD(lParam);
-		g_ResizeHeight = (UINT)HIWORD(lParam);
-		g_DataUpdated = true;
-		return 0;
-	case WM_MOVE:
-	case WM_PAINT:
-		g_DataUpdated = true;
-		break;
-	case WM_SYSCOMMAND:
-		if ((wParam & 0xfff0) == SC_KEYMENU)
-			return 0;
-		break;
-	case WM_DESTROY:
-		::PostQuitMessage(0);
-		return 0;
+			glm::vec4 sp1 = viewProj * glm::vec4(p1, 1.0f);
+			glm::vec4 sp2 = viewProj * glm::vec4(p2, 1.0f);
+
+			if (sp1.z > 0 && sp2.z > 0) {
+				drawList->AddLine(
+					ImVec2(sp1.x / sp1.w, sp1.y / sp1.w),
+					ImVec2(sp2.x / sp2.w, sp2.y / sp2.w),
+					(i % 6 == 0) ? gridColor : earthColor
+				);
+			}
+		}
 	}
-	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+
+
+
+
+ImVec2 ProjectOnPseudoSphere(float lat, float lon, ImVec2 center, float radius) {
+	
+	lat = glm::radians(lat);
+	lon = glm::radians(lon);
+
+	
+	float x = center.x + radius * cos(lat) * sin(lon);
+	float y = center.y - radius * sin(lat) * 0.8f; 
+
+	
+	float edge = 1.0f - (x * x + y * y) / (radius * radius);
+	if (edge < 0) edge = 0;
+
+	return ImVec2(
+		x * edge + center.x,
+		y * edge + center.y
+	);
+}
+
+void DrawPseudo3DEarth(ImDrawList* drawList, ImVec2 center, float radius) {
+	
+	const ImU32 earthColor = IM_COL32(100, 150, 255, 255);
+	const ImU32 shadowColor = IM_COL32(50, 100, 200, 255);
+
+	
+	drawList->AddCircleFilled(center, radius, earthColor);
+	for (int r = radius; r > 0; r -= 2) {
+		float ratio = (float)r / radius;
+		ImU32 color = IM_COL32(
+			100 * ratio + 50,
+			150 * ratio + 50,
+			255 * ratio,
+			255
+		);
+		drawList->AddCircle(center, r, color);
+	}
+
+	
+	const int segments = 24;
+	for (int i = 0; i <= segments; i++) {
+		
+		float angle = 2 * IM_PI * i / segments;
+		ImVec2 p1(center.x + radius * sin(angle), center.y - radius * 0.5f * cos(angle));
+		ImVec2 p2(center.x + radius * sin(angle), center.y + radius * 0.5f * cos(angle));
+		drawList->AddLine(p1, p2, IM_COL32(200, 200, 255, 80));
+
+		
+		if (i % 3 == 0) {
+			float latRadius = radius * cos(angle / 2);
+			drawList->AddEllipse(
+				center,
+				ImVec2(latRadius, latRadius * 0.3f),
+				IM_COL32(200, 200, 255, 80),
+				0, 0, 36
+			);
+		}
+	}
+}
+
+
+
 
 
 int draw_gui() {
-	// 创建窗口
+	g_GuiRunning = true;
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"FrameImGui", nullptr };
 	::RegisterClassExW(&wc);
 	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"FrameGui With DirectX11", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
-	// 初始化D3D
+	
 	if (!CreateDeviceD3D(hwnd)) {
 		CleanupDeviceD3D();
 		::UnregisterClassW(wc.lpszClassName, wc.hInstance);
 		return 1;
 	}
 
-	// 显示窗口
+	
 	::ShowWindow(hwnd, SW_SHOWDEFAULT);
 	::UpdateWindow(hwnd);
 
-	// 初始化ImGui
+	
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -109,15 +202,15 @@ int draw_gui() {
 	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-	// 主循环变量
+	
 	bool done = false;
 	bool show_statistical_window = true;
-	bool show_draw_window = false;
+	bool show_draw_window = true;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-	// 主循环
+	
 	while (!done) {
-		// 处理消息
+		
 		MSG msg;
 		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
 			::TranslateMessage(&msg);
@@ -126,53 +219,63 @@ int draw_gui() {
 				done = true;
 		}
 
-		// 按需渲染逻辑
-		if (g_DataUpdated) {
-			g_DataUpdated = false;
+		
 
-			// 处理窗口最小化/遮挡
-			if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
+			
+		ImGui_ImplDX11_NewFrame();
+		ImGui_ImplWin32_NewFrame();
+		ImGui::NewFrame();
+
+
+		
+		if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
 				::Sleep(10);
 				continue;
-			}
+		}
 
-			// 处理窗口大小调整
-			if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
+			
+		if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
 				CleanupRenderTarget();
 				g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
 				g_ResizeWidth = g_ResizeHeight = 0;
 				CreateRenderTarget();
-			}
+		}
 
-			// 更新数据（示例用随机值，实际应替换为真实数据源）
-			g_X = 0.0f + (rand() % 1800) / 10.0f;
-			g_Y = -90.0f + (rand() % 1800) / 10.0f;
-			g_Z = 500.0f + (rand() % 50) / 10.0f;
+			
 
-			// 记录历史数据
+		{
+			
+			std::lock_guard<std::mutex> lock(g_DataMutex);
 			g_LonHistory.push_back(g_X);
 			g_LatHistory.push_back(g_Y);
 			g_AltHistory.push_back(g_Z);
+			currentPos = LatLonToSphere(g_Y, g_X);
+            historyPositions.push_back(currentPos);
 			g_FrameCounter++;
 
-			// 移除旧数据
+			
 			while ((int)g_AltHistory.size() > g_FrameRange) {
 				g_AltHistory.erase(g_AltHistory.begin());
 				g_LonHistory.erase(g_LonHistory.begin());
 				g_LatHistory.erase(g_LatHistory.begin());
+				historyPositions.erase(historyPositions.begin());
 			}
+			// set current point forward screen
+			glm::vec3 targetDir = -glm::normalize(currentPos);
+            float angle = atan2(targetDir.x, targetDir.z);
+            earthMatrix = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0,1,0));
 
-			// 开始新帧
-			ImGui_ImplDX11_NewFrame();
-			ImGui_ImplWin32_NewFrame();
-			ImGui::NewFrame();
+			
 
-			// 构建界面
+		}
+
+
+			
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
 			float half_width = viewport->Size.x * 0.5f;
 			float height = viewport->Size.y;
 
-			// 左侧统计窗口
+			
 			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y), ImGuiCond_Always);
 			ImGui::SetNextWindowSize(ImVec2(half_width, height), ImGuiCond_Always);
 			if (ImGui::Begin("Frame Statistics", &show_statistical_window, ImGuiWindowFlags_MenuBar)) {
@@ -211,7 +314,7 @@ int draw_gui() {
 			}
 			ImGui::End();
 
-			// 右侧高度图
+			
 			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y), ImGuiCond_Always);
 			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
 			if (ImGui::Begin("Altitude Plot", &show_draw_window, ImGuiWindowFlags_MenuBar)) {
@@ -242,23 +345,38 @@ int draw_gui() {
 			}
 			ImGui::End();
 
-			// 渲染
+
+
+
+			
+
+			
 			ImGui::Render();
 			const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
+			
+			//const float clear_color_with_alpha[4] = { 0.0f, 0.0f, 0.0f, 1.00f };
 			g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
 			g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-			// 提交帧
-			g_pSwapChain->Present(1, 0);
-		}
-		else {
-			// 无数据更新时释放CPU
-			::WaitMessage();
-		}
-	}
 
-	// 清理资源
+
+			
+			static auto last_frame_time = std::chrono::steady_clock::now();
+			auto now = std::chrono::steady_clock::now();
+			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
+			if (elapsed < 16) { // ~60fps
+				std::this_thread::sleep_for(std::chrono::milliseconds(16 - elapsed));
+			}
+			last_frame_time = now;
+
+			
+			g_pSwapChain->Present(1, 0);
+		
+
+	}
+	g_GuiRunning = false;
+	
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
@@ -334,6 +452,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
 // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
 // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+
+
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -357,3 +477,5 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
 	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+
+ 

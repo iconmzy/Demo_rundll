@@ -25,30 +25,16 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 
 
-# 显式列出 ImGui 源文件
-set(IMGUI_SOURCES
-    ImGui/imgui.cpp
-    ImGui/imgui_demo.cpp
-    ImGui/imgui_draw.cpp
-    ImGui/imgui_tables.cpp
-    ImGui/imgui_widgets.cpp
-    ImGui/imgui_impl_win32.cpp
-    ImGui/imgui_impl_dx11.cpp
-    ImGui/implot.cpp
-    ImGui/implot_items.cpp
-    ImGui/implot3d.cpp
-    ImGui/implot3d_meshes.cpp
-    ImGui/implot3d_items.cpp
+file(GLOB_RECURSE SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ImGui/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/glm/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/glm/*.hpp"
 )
 
 
 # 创建 DLL，需要定义在下面的宏之前
-add_library(FrameImGuiDLL SHARED 
-    runFrameGUI.cpp
-    ${IMGUI_SOURCES}
-)
-
-
+add_library(FrameImGuiDLL SHARED ${SOURCES})
 
 
 # 定义 宏，用于导出DLL
