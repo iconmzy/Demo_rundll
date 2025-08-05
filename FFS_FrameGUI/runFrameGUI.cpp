@@ -13,6 +13,7 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include "ImGui/ImGuizmo.h"
+#include "ImGui/imgui-knobs.h" 
 
 
 
@@ -79,6 +80,9 @@ glm::vec3 LatLonToSphere(float lat, float lon, float radius = 1.0f) {
     );
 }
 
+
+
+
 void DrawEarth(ImDrawList* drawList, const glm::mat4& viewProj) {
 	const float radius = 1.0f;
 	const ImU32 earthColor = IM_COL32(100, 100, 255, 255);
@@ -110,66 +114,47 @@ void DrawEarth(ImDrawList* drawList, const glm::mat4& viewProj) {
 }
 
 
+void DrawLatLonGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude, float longitude) {
+	ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+	ImU32 tickColor = IM_COL32(200, 200, 200, 180);
+	ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+	ImU32 textColor = IM_COL32(255, 255, 255, 255);
 
+	// 外圈
+	drawList->AddCircle(center, radius, ringColor, 64, 2.0f);
 
-ImVec2 ProjectOnPseudoSphere(float lat, float lon, ImVec2 center, float radius) {
-	
-	lat = glm::radians(lat);
-	lon = glm::radians(lon);
+	// 刻度（每30度）
+	for (int i = 0; i < 360; i += 30) {
+		float angle = glm::radians((float)i);
+		float x1 = center.x + cosf(angle) * (radius - 5);
+		float y1 = center.y + sinf(angle) * (radius - 5);
+		float x2 = center.x + cosf(angle) * radius;
+		float y2 = center.y + sinf(angle) * radius;
+		drawList->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), tickColor, 1.5f);
+	}
 
-	
-	float x = center.x + radius * cos(lat) * sin(lon);
-	float y = center.y - radius * sin(lat) * 0.8f; 
-
-	
-	float edge = 1.0f - (x * x + y * y) / (radius * radius);
-	if (edge < 0) edge = 0;
-
-	return ImVec2(
-		x * edge + center.x,
-		y * edge + center.y
+	// 经度指针（红）
+	float lonAngle = glm::radians(longitude);
+	ImVec2 lonEnd = ImVec2(
+		center.x + sin(lonAngle) * (radius - 10),
+		center.y - cos(lonAngle) * (radius - 10)
 	);
+	drawList->AddLine(center, lonEnd, needleColor, 2.0f);
+	drawList->AddText(ImVec2(center.x - 30, center.y + radius + 5), textColor,
+		("Lon: " + std::to_string((int)longitude)).c_str());
+
+	// 纬度指针（蓝）
+	float latAngle = glm::radians(latitude);
+	ImVec2 latEnd = ImVec2(
+		center.x + sin(latAngle + IM_PI / 2) * (radius - 10),
+		center.y - cos(latAngle + IM_PI / 2) * (radius - 10)
+	);
+	drawList->AddLine(center, latEnd, IM_COL32(100, 200, 255, 255), 2.0f);
+	drawList->AddText(ImVec2(center.x - 30, center.y + radius + 25), textColor,
+		("Lat: " + std::to_string((int)latitude)).c_str());
 }
 
-void DrawPseudo3DEarth(ImDrawList* drawList, ImVec2 center, float radius) {
-	
-	const ImU32 earthColor = IM_COL32(100, 150, 255, 255);
-	const ImU32 shadowColor = IM_COL32(50, 100, 200, 255);
 
-	
-	drawList->AddCircleFilled(center, radius, earthColor);
-	for (int r = radius; r > 0; r -= 2) {
-		float ratio = (float)r / radius;
-		ImU32 color = IM_COL32(
-			100 * ratio + 50,
-			150 * ratio + 50,
-			255 * ratio,
-			255
-		);
-		drawList->AddCircle(center, r, color);
-	}
-
-	
-	const int segments = 24;
-	for (int i = 0; i <= segments; i++) {
-		
-		float angle = 2 * IM_PI * i / segments;
-		ImVec2 p1(center.x + radius * sin(angle), center.y - radius * 0.5f * cos(angle));
-		ImVec2 p2(center.x + radius * sin(angle), center.y + radius * 0.5f * cos(angle));
-		drawList->AddLine(p1, p2, IM_COL32(200, 200, 255, 80));
-
-		
-		if (i % 3 == 0) {
-			float latRadius = radius * cos(angle / 2);
-			drawList->AddEllipse(
-				center,
-				ImVec2(latRadius, latRadius * 0.3f),
-				IM_COL32(200, 200, 255, 80),
-				0, 0, 36
-			);
-		}
-	}
-}
 
 
 
@@ -345,6 +330,54 @@ int draw_gui() {
 			}
 			ImGui::End();
 
+
+
+			// 窗口三：经纬度 HUD 
+			/*
+			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + height * 0.5f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
+			if (ImGui::Begin("LatLon HUD", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+				ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+				ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
+				if (canvas_sz.x < 50.0f) canvas_sz.x = 50.0f;
+				if (canvas_sz.y < 50.0f) canvas_sz.y = 50.0f;
+				ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
+
+				ImDrawList* draw_list = ImGui::GetWindowDrawList();
+				ImVec2 center = ImVec2((canvas_p0.x + canvas_p1.x) * 0.5f, (canvas_p0.y + canvas_p1.y) * 0.5f);
+				float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
+
+				draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(20, 20, 20, 255));  // 背景
+				DrawLatLonGauge(draw_list, center, radius, g_Y, g_X);
+			}
+			ImGui::End();
+			*/
+
+			
+			ImGui::SetNextWindowPos(ImVec2(1280 - 350, 720 - 240), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
+			if (ImGui::Begin("LatLon Panel")) {
+				ImGui::Text("GPS Coordinates");
+				ImGui::Separator();
+
+				ImGui::Columns(2, nullptr, false);
+
+				// 经度旋钮
+				ImGuiKnobs::Knob("Longitude", &g_Y,
+					0.0f, 360.0f, 1.0f, "%.2f°",
+					ImGuiKnobVariant_Wiper, 100,
+					ImGuiKnobFlags_NoInput | ImGuiKnobFlags_ValueTooltip);
+				ImGui::NextColumn();
+
+				// 纬度旋钮
+				ImGuiKnobs::Knob("Latitude", &g_X,
+					-90.0f, 90.0f, 1.0f, "%.2f°",
+					ImGuiKnobVariant_Wiper, 100,
+					ImGuiKnobFlags_NoInput | ImGuiKnobFlags_ValueTooltip);
+
+				ImGui::Columns(1);
+			}
+			ImGui::End();
 
 
 
