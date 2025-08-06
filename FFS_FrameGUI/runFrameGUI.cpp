@@ -1,19 +1,13 @@
-#define FRAMEGUI_EXPORTS 
+#define FRAMEGUI_EXPORTS
 #include"framegui.h"
 #include <d3d11.h>
 #include <tchar.h>
 #include "ImGui/imgui_impl_win32.h"
 #include "ImGui/imgui_impl_dx11.h"
 #include "ImGui/imgui.h"
-#include "ImGui/implot.h"
 #include <algorithm>
 #include <vector>
 #include <string>
-#include "glm/glm.hpp"
-#include "glm/gtc/matrix_transform.hpp"
-#include "glm/gtc/quaternion.hpp"
-#include "ImGui/ImGuizmo.h"
-#include "ImGui/imgui-knobs.h" 
 
 
 
@@ -40,13 +34,6 @@ static std::vector<std::string> g_ErrorFrames;
 static std::vector<float> g_AltHistory;
 static std::vector<float> g_LonHistory; 
 static std::vector<float> g_LatHistory;  
-
-
-static glm::mat4 earthMatrix = glm::mat4(1.0f); 
-static glm::vec3 currentPos;                    
-static std::vector<glm::vec3> historyPositions; 
-
-
      
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -56,12 +43,13 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 
-std::mutex g_DataMutex;
+FRAMEGUI_API std::mutex g_DataMutex;
 
 //make sure auomic operate
-std::atomic<bool> g_GuiRunning(false);
+FRAMEGUI_API std::atomic<bool> g_GuiRunning(false);
 
-void UpdateData(float x, float y, float z) {
+FRAMEGUI_API void UpdateFrameGUI_Data(float x, float y, float z)
+{
 	std::lock_guard<std::mutex> lock(g_DataMutex);
 	g_X = x;
 	g_Y = y;
@@ -70,114 +58,210 @@ void UpdateData(float x, float y, float z) {
 }
 
 
-glm::vec3 LatLonToSphere(float lat, float lon, float radius = 1.0f) {
-    lat = glm::radians(lat);
-    lon = glm::radians(lon);
-    return glm::vec3(
-        radius * cos(lat) * cos(lon),
-        radius * sin(lat),
-        radius * cos(lat) * sin(lon)
-    );
+
+void DrawLatLonGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude, float longitude)
+{
+    
+    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+    ImU32 highlightColor = IM_COL32(255, 255, 0, 200);
+
+    
+    drawList->AddCircle(center, radius, ringColor, 128, 2.0f);
+
+  
+    for (int i = 0; i < 360; i += 1)
+    {
+        float angle = glm::radians((float)i);
+        bool isMajorTick = (i % 5) == 0;
+        float tickLength = isMajorTick ? 8.0f : 4.0f;
+        float innerRadius = isMajorTick ? radius - tickLength : radius - tickLength;
+
+        float x1 = center.x + cosf(angle) * innerRadius;
+        float y1 = center.y + sinf(angle) * innerRadius;
+        float x2 = center.x + cosf(angle) * radius;
+        float y2 = center.y + sinf(angle) * radius;
+
+        drawList->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 1.5f : 1.0f);
+
+        
+        if (isMajorTick && (i % 15) == 0)
+        {
+            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 15), center.y + sinf(angle) * (radius - 15));
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d", i);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+            drawList->AddText(ImVec2(textPos.x - textSize.x * 0.5f, textPos.y - textSize.y * 0.5f), textColor, buf);
+        }
+    }
+
+    
+    float lonAngle = glm::radians(longitude);
+    ImVec2 lonEnd = ImVec2(center.x + sin(lonAngle) * (radius - 5),   
+                           center.y - cos(lonAngle) * (radius - 5));
+    drawList->AddLine(center, lonEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(lonEnd, 4.0f, needleColor);  
+
+   
+    float latAngle = glm::radians(latitude + 90.0f);   
+    ImVec2 latEnd = ImVec2(center.x + sin(latAngle) * (radius - 5), center.y - cos(latAngle) * (radius - 5));
+    drawList->AddLine(center, latEnd, IM_COL32(100, 200, 255, 255), 3.0f);
+    drawList->AddCircleFilled(latEnd, 4.0f, IM_COL32(100, 200, 255, 255));
+
+    
+    //char lonText[32], latText[32];
+    //snprintf(lonText, sizeof(lonText), "Lon: %.4f°", longitude);
+    //snprintf(latText, sizeof(latText), "Lat: %.4f°", latitude);
+
+    // 在圆下方添加数值显示
+    //ImVec2 lonTextSize = ImGui::CalcTextSize(lonText);
+    //ImVec2 latTextSize = ImGui::CalcTextSize(latText);
+
+    //drawList->AddText(ImVec2(center.x - lonTextSize.x * 0.5f, center.y + radius + 5), textColor, lonText);
+    //drawList->AddText(ImVec2(center.x - latTextSize.x * 0.5f, center.y + radius + 25), textColor, latText);
+
+    // 添加当前值附近的刻度高亮
+    float highlightStart = glm::radians(longitude - 10);
+    float highlightEnd = glm::radians(longitude + 10);
+    drawList->PathArcTo(center, radius + 5, highlightStart, highlightEnd);
+    drawList->PathStroke(highlightColor, false, 3.0f);
 }
 
 
 
 
-void DrawEarth(ImDrawList* drawList, const glm::mat4& viewProj) {
-	const float radius = 1.0f;
-	const ImU32 earthColor = IM_COL32(100, 100, 255, 255);
-	const ImU32 gridColor = IM_COL32(80, 80, 200, 255);
+void DrawLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float longitude)
+{
+    // 颜色定义
+    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
 
+    // 绘制半圆 (从90°到270°)
+    drawList->PathArcTo(center, radius, IM_PI * 0.5f, IM_PI * 1.5f);
+    drawList->PathStroke(ringColor, false, 2.0f);
 
-	const int segments = 24;
-	for (int i = 0; i <= segments; ++i) {
-		float lat = glm::pi<float>() * (i / (float)segments - 0.5f);
-		for (int j = 0; j < segments; ++j) {
-			float lon1 = 2 * glm::pi<float>() * j / segments;
-			float lon2 = 2 * glm::pi<float>() * (j + 1) / segments;
+    // 精细刻度 (每1°小刻度，每5°大刻度)
+    for (int i = 0; i <= 180; i += 1)
+    {
+        float angle = glm::radians(static_cast<float>(i) + 90.0f);
+        bool isMajorTick = (i % 5) == 0;
+        float tickLength = isMajorTick ? 10.0f : 5.0f;
 
-			glm::vec3 p1 = LatLonToSphere(glm::degrees(lat), glm::degrees(lon1));
-			glm::vec3 p2 = LatLonToSphere(glm::degrees(lat), glm::degrees(lon2));
+        // 计算刻度线位置
+        float cosAngle = cosf(angle);
+        float sinAngle = sinf(angle);
+        ImVec2 innerPoint(center.x + cosAngle * (radius - tickLength), center.y + sinAngle * (radius - tickLength));
+        ImVec2 outerPoint(center.x + cosAngle * radius, center.y + sinAngle * radius);
 
-			glm::vec4 sp1 = viewProj * glm::vec4(p1, 1.0f);
-			glm::vec4 sp2 = viewProj * glm::vec4(p2, 1.0f);
+        drawList->AddLine(innerPoint, outerPoint, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
 
-			if (sp1.z > 0 && sp2.z > 0) {
-				drawList->AddLine(
-					ImVec2(sp1.x / sp1.w, sp1.y / sp1.w),
-					ImVec2(sp2.x / sp2.w, sp2.y / sp2.w),
-					(i % 6 == 0) ? gridColor : earthColor
-				);
-			}
-		}
-	}
+        // 每10°添加数字标注
+        if (isMajorTick && (i % 10) == 0)
+        {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d", i);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+
+            // 文本位置 (向圆心内偏移)
+            ImVec2 textPos(center.x + cosAngle * (radius - 25), center.y + sinAngle * (radius - 25));
+
+            // 调整文本位置避免重叠
+            textPos.x -= textSize.x * 0.5f;
+            textPos.y -= textSize.y * 0.5f;
+
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    // 经度指针 (转换为半圆角度)
+    float lonAngle = glm::radians(longitude + 90.0f);
+    ImVec2 lonEnd(center.x + cosf(lonAngle) * (radius - 15), center.y + sinf(lonAngle) * (radius - 15));
+
+    drawList->AddLine(center, lonEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(lonEnd, 5.0f, needleColor);
+}
+
+// 纬度仪表盘绘制函数 (1/4圆)
+void DrawLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude)
+{
+    // 颜色定义
+    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(100, 200, 255, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+
+    // 绘制1/4圆 (从0°到90°)
+    drawList->PathArcTo(center, radius, 0.0f, IM_PI * 0.5f);
+    drawList->PathStroke(ringColor, false, 2.0f);
+
+    // 精细刻度 (每1°小刻度，每5°大刻度)
+    for (int i = 0; i <= 90; i += 1)
+    {
+        float angle = glm::radians(static_cast<float>(i));
+        bool isMajorTick = (i % 5) == 0;
+        float tickLength = isMajorTick ? 10.0f : 5.0f;
+
+        // 计算刻度线位置
+        float cosAngle = cosf(angle);
+        float sinAngle = sinf(angle);
+        ImVec2 innerPoint(center.x + cosAngle * (radius - tickLength), center.y - sinAngle * (radius - tickLength));
+        ImVec2 outerPoint(center.x + cosAngle * radius, center.y - sinAngle * radius);
+
+        drawList->AddLine(innerPoint, outerPoint, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
+
+        // 每5°添加数字标注
+        if (isMajorTick)
+        {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d", i);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+
+            // 文本位置 (向圆心内偏移)
+            ImVec2 textPos(center.x + cosAngle * (radius - 30), center.y - sinAngle * (radius - 30));
+
+            // 调整文本位置避免重叠
+            textPos.x -= textSize.x * 0.5f;
+            textPos.y -= textSize.y * 0.5f;
+
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    // 纬度指针
+    float latAngle = glm::radians(latitude);
+    ImVec2 latEnd(center.x + cosf(latAngle) * (radius - 15), center.y - sinf(latAngle) * (radius - 15));
+
+    drawList->AddLine(center, latEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(latEnd, 5.0f, needleColor);
 }
 
 
-void DrawLatLonGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude, float longitude) {
-	ImU32 ringColor = IM_COL32(80, 150, 255, 255);
-	ImU32 tickColor = IM_COL32(200, 200, 200, 180);
-	ImU32 needleColor = IM_COL32(255, 100, 100, 255);
-	ImU32 textColor = IM_COL32(255, 255, 255, 255);
-
-	// 外圈
-	drawList->AddCircle(center, radius, ringColor, 64, 2.0f);
-
-	// 刻度（每30度）
-	for (int i = 0; i < 360; i += 30) {
-		float angle = glm::radians((float)i);
-		float x1 = center.x + cosf(angle) * (radius - 5);
-		float y1 = center.y + sinf(angle) * (radius - 5);
-		float x2 = center.x + cosf(angle) * radius;
-		float y2 = center.y + sinf(angle) * radius;
-		drawList->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), tickColor, 1.5f);
-	}
-
-	// 经度指针（红）
-	float lonAngle = glm::radians(longitude);
-	ImVec2 lonEnd = ImVec2(
-		center.x + sin(lonAngle) * (radius - 10),
-		center.y - cos(lonAngle) * (radius - 10)
-	);
-	drawList->AddLine(center, lonEnd, needleColor, 2.0f);
-	drawList->AddText(ImVec2(center.x - 30, center.y + radius + 5), textColor,
-		("Lon: " + std::to_string((int)longitude)).c_str());
-
-	// 纬度指针（蓝）
-	float latAngle = glm::radians(latitude);
-	ImVec2 latEnd = ImVec2(
-		center.x + sin(latAngle + IM_PI / 2) * (radius - 10),
-		center.y - cos(latAngle + IM_PI / 2) * (radius - 10)
-	);
-	drawList->AddLine(center, latEnd, IM_COL32(100, 200, 255, 255), 2.0f);
-	drawList->AddText(ImVec2(center.x - 30, center.y + radius + 25), textColor,
-		("Lat: " + std::to_string((int)latitude)).c_str());
-}
-
-
-
-
-
-
-
-int draw_gui() {
+FRAMEGUI_API int draw_gui()
+{
 	g_GuiRunning = true;
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"FrameImGui", nullptr };
 	::RegisterClassExW(&wc);
 	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"FrameGui With DirectX11", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
-	
+
 	if (!CreateDeviceD3D(hwnd)) {
 		CleanupDeviceD3D();
 		::UnregisterClassW(wc.lpszClassName, wc.hInstance);
 		return 1;
 	}
 
-	
+
 	::ShowWindow(hwnd, SW_SHOWDEFAULT);
 	::UpdateWindow(hwnd);
 
-	
+
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -187,15 +271,15 @@ int draw_gui() {
 	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-	
+
 	bool done = false;
 	bool show_statistical_window = true;
 	bool show_draw_window = true;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-	
+
 	while (!done) {
-		
+		// handle message
 		MSG msg;
 		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
 			::TranslateMessage(&msg);
@@ -229,28 +313,19 @@ int draw_gui() {
 			
 
 		{
-			
+			// history windows 
 			std::lock_guard<std::mutex> lock(g_DataMutex);
 			g_LonHistory.push_back(g_X);
 			g_LatHistory.push_back(g_Y);
 			g_AltHistory.push_back(g_Z);
-			currentPos = LatLonToSphere(g_Y, g_X);
-            historyPositions.push_back(currentPos);
 			g_FrameCounter++;
 
-			
+			// g_FrameRange is editable
 			while ((int)g_AltHistory.size() > g_FrameRange) {
 				g_AltHistory.erase(g_AltHistory.begin());
 				g_LonHistory.erase(g_LonHistory.begin());
 				g_LatHistory.erase(g_LatHistory.begin());
-				historyPositions.erase(historyPositions.begin());
 			}
-			// set current point forward screen
-			glm::vec3 targetDir = -glm::normalize(currentPos);
-            float angle = atan2(targetDir.x, targetDir.z);
-            earthMatrix = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0,1,0));
-
-			
 
 		}
 
@@ -259,8 +334,9 @@ int draw_gui() {
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
 			float half_width = viewport->Size.x * 0.5f;
 			float height = viewport->Size.y;
+			float half_height = viewport->Size.y * 0.5f;
 
-			
+			// left window for Statistics
 			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y), ImGuiCond_Always);
 			ImGui::SetNextWindowSize(ImVec2(half_width, height), ImGuiCond_Always);
 			if (ImGui::Begin("Frame Statistics", &show_statistical_window, ImGuiWindowFlags_MenuBar)) {
@@ -299,7 +375,7 @@ int draw_gui() {
 			}
 			ImGui::End();
 
-			
+			// right side windows for plot
 			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y), ImGuiCond_Always);
 			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
 			if (ImGui::Begin("Altitude Plot", &show_draw_window, ImGuiWindowFlags_MenuBar)) {
@@ -332,79 +408,75 @@ int draw_gui() {
 
 
 
-			// 窗口三：经纬度 HUD 
-			/*
-			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + height * 0.5f), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
-			if (ImGui::Begin("LatLon HUD", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-				ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
-				ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
-				if (canvas_sz.x < 50.0f) canvas_sz.x = 50.0f;
-				if (canvas_sz.y < 50.0f) canvas_sz.y = 50.0f;
-				ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
 
-				ImDrawList* draw_list = ImGui::GetWindowDrawList();
-				ImVec2 center = ImVec2((canvas_p0.x + canvas_p1.x) * 0.5f, (canvas_p0.y + canvas_p1.y) * 0.5f);
-				float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
+			{
 
-				draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(20, 20, 20, 255));  // 背景
-				DrawLatLonGauge(draw_list, center, radius, g_Y, g_X);
-			}
-			ImGui::End();
-			*/
 
-			
-			ImGui::SetNextWindowPos(ImVec2(1280 - 350, 720 - 240), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
-			if (ImGui::Begin("LatLon Panel")) {
-				ImGui::Text("GPS Coordinates");
-				ImGui::Separator();
+  
+                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + half_height), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+                if (ImGui::Begin("Longitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+                {
+                    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+                    ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
+                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
+                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
 
-				ImGui::Columns(2, nullptr, false);
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
+                    DrawLongitudeGauge(draw_list, center, radius, g_X);
+                }
+                ImGui::End();
 
-				// 经度旋钮
-				ImGuiKnobs::Knob("Longitude", &g_Y,
-					0.0f, 360.0f, 1.0f, "%.2f°",
-					ImGuiKnobVariant_Wiper, 100,
-					ImGuiKnobFlags_NoInput | ImGuiKnobFlags_ValueTooltip);
-				ImGui::NextColumn();
+               
+                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width *1.5f, viewport->Pos.y + half_height), ImGuiCond_Always);
+          
+               ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+                if (ImGui::Begin("Latitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+                {
+                    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+                    ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
+                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
+                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
 
-				// 纬度旋钮
-				ImGuiKnobs::Knob("Latitude", &g_X,
-					-90.0f, 90.0f, 1.0f, "%.2f°",
-					ImGuiKnobVariant_Wiper, 100,
-					ImGuiKnobFlags_NoInput | ImGuiKnobFlags_ValueTooltip);
-
-				ImGui::Columns(1);
-			}
-			ImGui::End();
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
+                    DrawLatitudeGauge(draw_list, center, radius, g_Y);
+                }
+                ImGui::End();
+            }
 
 
 
-			
+
+
+
+
+
 
 			
 			ImGui::Render();
 			const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-			
-			//const float clear_color_with_alpha[4] = { 0.0f, 0.0f, 0.0f, 1.00f };
 			g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
 			g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 
 
-			
-			static auto last_frame_time = std::chrono::steady_clock::now();
-			auto now = std::chrono::steady_clock::now();
-			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
-			if (elapsed < 16) { // ~60fps
-				std::this_thread::sleep_for(std::chrono::milliseconds(16 - elapsed));
-			}
-			last_frame_time = now;
 
-			
-			g_pSwapChain->Present(1, 0);
+
+
+// 			
+// 			static auto last_frame_time = std::chrono::steady_clock::now();
+// 			auto now = std::chrono::steady_clock::now();
+// 			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
+// 			if (elapsed < 16) { 
+// 				std::this_thread::sleep_for(std::chrono::milliseconds(16 - elapsed));
+// 			}
+// 			last_frame_time = now;
+// 
+// 			
+ 			g_pSwapChain->Present(1, 0);
 		
 
 	}
