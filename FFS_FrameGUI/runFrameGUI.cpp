@@ -18,7 +18,7 @@ static IDXGISwapChain* g_pSwapChain = nullptr;
 static bool                     g_SwapChainOccluded = false;
 static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
-
+std::vector<std::string> g_ErrorFrames;
 
 
 
@@ -130,6 +130,114 @@ void DrawLatLonGauge(ImDrawList* drawList, ImVec2 center, float radius, float la
     drawList->PathStroke(highlightColor, false, 3.0f);
 }
 
+
+void DrawDetailLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float longitude)
+{
+    // 定义范围
+    float range = 0.01f;  // 设置 ±0.01° 的范围
+    float minValue = longitude - range;
+    float maxValue = longitude + range;
+
+    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+
+    // 绘制半圆 (从90°到270°)
+    drawList->PathArcTo(center, radius, IM_PI * 0.5f, IM_PI * 1.5f);
+    drawList->PathStroke(ringColor, false, 2.0f);
+
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
+    {
+        float t = (float)i / tickCount;
+        float value = minValue + (maxValue - minValue) * t;
+
+        float angle = IM_PI * 0.5f + t * IM_PI;  // 从 90° 到 270°
+        bool isMajorTick = (i % 10) == 0;
+        float tickLength = isMajorTick ? 10.0f : 5.0f;
+
+        // 计算刻度线位置
+        ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength),
+                           center.y + sinf(angle) * (radius - tickLength));
+        ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius,
+                           center.y + sinf(angle) * radius);
+        drawList->AddLine(p1, p2, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
+
+        // 每10°添加数字标注
+        if (isMajorTick)
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 25) - textSize.x * 0.5f,
+                                    center.y + sinf(angle) * (radius - 25) - textSize.y * 0.5f);
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    // 经度指针
+    float needleAngle = IM_PI * 0.5f + ((longitude - minValue) / (maxValue - minValue)) * IM_PI;
+    ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15),
+                              center.y + sinf(needleAngle) * (radius - 15));
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
+}
+
+void DrawDetailLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude)
+{
+    // 定义范围
+    float range = 0.01f;  // 设置 ±0.01° 的范围
+    float minValue = latitude - range;
+    float maxValue = latitude + range;
+
+    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(100, 200, 255, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+
+    // 绘制1/4圆 (从0°到90°)
+    drawList->PathArcTo(center, radius, 0.0f, IM_PI * 0.5f);
+    drawList->PathStroke(ringColor, false, 2.0f);
+
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
+    {
+        float t = (float)i / tickCount;
+        float value = minValue + (maxValue - minValue) * t;
+
+        float angle = IM_PI * t;  // 从 0° 到 90°
+        bool isMajorTick = (i % 10) == 0;
+        float tickLength = isMajorTick ? 10.0f : 5.0f;
+
+        // 计算刻度线位置
+        ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength),
+                           center.y - sinf(angle) * (radius - tickLength));
+        ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius,
+                           center.y - sinf(angle) * radius);
+        drawList->AddLine(p1, p2, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
+
+        // 每10°添加数字标注
+        if (isMajorTick)
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 30) - textSize.x * 0.5f,
+                                    center.y - sinf(angle) * (radius - 30) - textSize.y * 0.5f);
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    // 纬度指针
+    float needleAngle = ((latitude - minValue) / (maxValue - minValue)) * IM_PI;
+    ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15),
+                              center.y - sinf(needleAngle) * (radius - 15));
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
+}
 
 
 
@@ -369,9 +477,21 @@ FRAMEGUI_API int draw_gui()
 					ImGui::EndTable();
 				}
 
+                
 				ImGui::Spacing();
 				ImGui::Text("rate: %.1f FPS", ImGui::GetIO().Framerate);
+
+                // Add child window for error frames output
+                ImGui::Separator();
+                ImGui::Text("Error Frames");
+                ImGui::BeginChild("ErrorFramesChild", ImVec2(0, 200), true, ImGuiWindowFlags_HorizontalScrollbar);
+                for (const auto& frame : g_ErrorFrames) {
+                    ImGui::TextUnformatted(frame.c_str());
+                }
+                ImGui::EndChild();
 				ImGui::EndChild();
+
+
 			}
 			ImGui::End();
 
@@ -408,43 +528,48 @@ FRAMEGUI_API int draw_gui()
 
 
 
+         {   
+            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + half_height), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+            if (ImGui::Begin("Longitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+            {
+                ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+                ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
+                ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
+                float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
 
-			{
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(0, 0, 0, 255));
 
+                // Draw Longitude Gauge
+                DrawDetailLongitudeGauge(draw_list, center, radius, g_X);
 
-  
-                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + half_height), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
-                if (ImGui::Begin("Longitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
-                {
-                    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
-                    ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
-                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
-                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
-
-                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
-                    DrawLongitudeGauge(draw_list, center, radius, g_X);
-                }
-                ImGui::End();
-
-               
-                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width *1.5f, viewport->Pos.y + half_height), ImGuiCond_Always);
-          
-               ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
-                if (ImGui::Begin("Latitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
-                {
-                    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
-                    ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
-                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
-                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
-
-                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
-                    DrawLatitudeGauge(draw_list, center, radius, g_Y);
-                }
                 ImGui::End();
             }
+        }
+
+        {   
+            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width + half_width/2, viewport->Pos.y + half_height), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+            if (ImGui::Begin("Latitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+            {
+                ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+                ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
+                ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
+                float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
+
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(0, 0, 0, 255));
+
+                // Draw Latitude Gauge
+                DrawDetailLatitudeGauge(draw_list, center, radius, g_Y);
+
+                ImGui::End();
+            }
+        }
+
+
+
 
 
 
