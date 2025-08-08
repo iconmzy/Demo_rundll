@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <vector>
 #include <string>
-
+#include <chrono>
 
 
 // Data
@@ -24,16 +24,35 @@ static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
 
 //static bool g_DataUpdated = true;  
-static float g_X = 0.0f;
-static float g_Y = 0.0f;
-static float g_Z = 500.0f;
+static double g_X = 0.0f;
+static double g_Y = 0.0f;
+static double g_Z = 500.0f;
+static double yaw_dur = 0.f;
+static double pitch_dur = 0.f;
+static double roll_dur = 0.f;
+
 static int g_FrameRange = 100;
 static int g_FrameCounter = 0;
+static std::chrono::steady_clock::time_point g_CurrentSecondStartTime;
+static bool g_FirstUpdate = true;
+static int currnetFramePerSecond = 0;
+static int currnetFramePerSecondRange = 10;
+static double longitudeCurrentMin = 0.0f;
+static double longitudeCurrentMax = 0.0f;
+static double latitudeCurrentMin = 0.0f;
+static double latitudeCurrentMax = 0.0f;
 
+
+
+
+
+
+//to do,how to define error Frames
 static std::vector<std::string> g_ErrorFrames;
+static std::vector<int> historyFrameCountPerSecond;
 static std::vector<float> g_AltHistory;
-static std::vector<float> g_LonHistory; 
-static std::vector<float> g_LatHistory;  
+static std::vector<float> g_LonHistory;
+static std::vector < float> g_LatHistory;  
      
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -48,199 +67,340 @@ FRAMEGUI_API std::mutex g_DataMutex;
 //make sure auomic operate
 FRAMEGUI_API std::atomic<bool> g_GuiRunning(false);
 
-FRAMEGUI_API void UpdateFrameGUI_Data(float x, float y, float z)
-{
+FRAMEGUI_API void UpdateFrameGUI_Data(double x, double y, double z,double yaw, double  pitch, double roll){
 	std::lock_guard<std::mutex> lock(g_DataMutex);
 	g_X = x;
 	g_Y = y;
 	g_Z = z;
 	//g_DataUpdated = true;
-}
-
-
-
-void DrawLatLonGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude, float longitude)
-{
+    yaw_dur = yaw;
+    pitch_dur = pitch;
+    roll_dur = roll;
     
-    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
-    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
-    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
-    ImU32 needleColor = IM_COL32(255, 100, 100, 255);
-    ImU32 textColor = IM_COL32(255, 255, 255, 255);
-    ImU32 highlightColor = IM_COL32(255, 255, 0, 200);
+    auto current_time = std::chrono::steady_clock::now();
 
     
-    drawList->AddCircle(center, radius, ringColor, 128, 2.0f);
-
-  
-    for (int i = 0; i < 360; i += 1)
+    if (g_FirstUpdate)
     {
-        float angle = glm::radians((float)i);
-        bool isMajorTick = (i % 5) == 0;
-        float tickLength = isMajorTick ? 8.0f : 4.0f;
-        float innerRadius = isMajorTick ? radius - tickLength : radius - tickLength;
-
-        float x1 = center.x + cosf(angle) * innerRadius;
-        float y1 = center.y + sinf(angle) * innerRadius;
-        float x2 = center.x + cosf(angle) * radius;
-        float y2 = center.y + sinf(angle) * radius;
-
-        drawList->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 1.5f : 1.0f);
-
-        
-        if (isMajorTick && (i % 15) == 0)
-        {
-            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 15), center.y + sinf(angle) * (radius - 15));
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", i);
-            ImVec2 textSize = ImGui::CalcTextSize(buf);
-            drawList->AddText(ImVec2(textPos.x - textSize.x * 0.5f, textPos.y - textSize.y * 0.5f), textColor, buf);
-        }
+        g_CurrentSecondStartTime = current_time;
+        currnetFramePerSecond = 0;
+        g_FirstUpdate = false;
     }
 
     
-    float lonAngle = glm::radians(longitude);
-    ImVec2 lonEnd = ImVec2(center.x + sin(lonAngle) * (radius - 5),   
-                           center.y - cos(lonAngle) * (radius - 5));
-    drawList->AddLine(center, lonEnd, needleColor, 3.0f);
-    drawList->AddCircleFilled(lonEnd, 4.0f, needleColor);  
-
-   
-    float latAngle = glm::radians(latitude + 90.0f);   
-    ImVec2 latEnd = ImVec2(center.x + sin(latAngle) * (radius - 5), center.y - cos(latAngle) * (radius - 5));
-    drawList->AddLine(center, latEnd, IM_COL32(100, 200, 255, 255), 3.0f);
-    drawList->AddCircleFilled(latEnd, 4.0f, IM_COL32(100, 200, 255, 255));
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(current_time - g_CurrentSecondStartTime);
+    double elapsed_seconds = duration.count();
 
     
-    //char lonText[32], latText[32];
-    //snprintf(lonText, sizeof(lonText), "Lon: %.4f°", longitude);
-    //snprintf(latText, sizeof(latText), "Lat: %.4f°", latitude);
+    if (elapsed_seconds >= 1.0)
+    {
+        addFixVectorElement(currnetFramePerSecond, historyFrameCountPerSecond, currnetFramePerSecondRange);
+        currnetFramePerSecond = 0;                
+        g_CurrentSecondStartTime = current_time;   
+    }
 
-    // 在圆下方添加数值显示
-    //ImVec2 lonTextSize = ImGui::CalcTextSize(lonText);
-    //ImVec2 latTextSize = ImGui::CalcTextSize(latText);
-
-    //drawList->AddText(ImVec2(center.x - lonTextSize.x * 0.5f, center.y + radius + 5), textColor, lonText);
-    //drawList->AddText(ImVec2(center.x - latTextSize.x * 0.5f, center.y + radius + 25), textColor, latText);
-
-    // 添加当前值附近的刻度高亮
-    float highlightStart = glm::radians(longitude - 10);
-    float highlightEnd = glm::radians(longitude + 10);
-    drawList->PathArcTo(center, radius + 5, highlightStart, highlightEnd);
-    drawList->PathStroke(highlightColor, false, 3.0f);
+    currnetFramePerSecond++;
+    g_FrameCounter++;
+    // history windows
+    g_LonHistory.push_back(g_X);
+    g_LatHistory.push_back(g_Y);
+    g_AltHistory.push_back(g_Z);
 }
 
 
 
 
-void DrawLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float longitude)
+
+void AdjustDisplayRange(double currentValue, double& minRange, double& maxRange, double baseRange = 0.02f,double edgeRatio = 0.1f)
 {
-    // 颜色定义
-    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    const double range = maxRange - minRange;
+    const double edgeThreshold = range * edgeRatio;   
+
+    
+    const double t = (currentValue - minRange) / range;
+
+    
+    if (t < edgeRatio)
+    {
+        minRange = currentValue - edgeThreshold;
+        maxRange = minRange + baseRange;
+    }
+    
+    else if (t > (1.0f - edgeRatio))
+    {
+        maxRange = currentValue + edgeThreshold;
+        minRange = maxRange - baseRange;
+    }
+    
+}
+
+
+void DrawLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, double longitude)
+{
+    std::lock_guard<std::mutex> lock(g_DataMutex);
+    const double EPS = 1e-9;   
+    //const double MIN_RANGE = 1e-6; 
+    
+    if (fabs(longitudeCurrentMin - longitudeCurrentMax) < EPS)
+    {
+        longitudeCurrentMin = longitude - 0.02f;
+        longitudeCurrentMax = longitude + 0.02f;
+    }
+
+    
+    AdjustDisplayRange(longitude, longitudeCurrentMin, longitudeCurrentMax);
+     double minValue = longitudeCurrentMin;
+     double maxValue = longitudeCurrentMax;
+//      double range = maxValue - minValue;
+//     if (range < MIN_RANGE){
+//         double center_val = (minValue + maxValue) / 2.0;
+//         latitudeCurrentMin = center_val - MIN_RANGE / 2.0;
+//         latitudeCurrentMax = center_val + MIN_RANGE / 2.0;
+//         minValue = longitudeCurrentMin;
+//         maxValue = longitudeCurrentMax;
+//         range = MIN_RANGE;
+//     }
+
+
+
     ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
     ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
     ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+    ImU32 edgeWarningColor = IM_COL32(255, 200, 0, 255);   
     ImU32 textColor = IM_COL32(255, 255, 255, 255);
 
-    // 绘制半圆 (从90°到270°)
-    drawList->PathArcTo(center, radius, IM_PI * 0.5f, IM_PI * 1.5f);
-    drawList->PathStroke(ringColor, false, 2.0f);
-
-    // 精细刻度 (每1°小刻度，每5°大刻度)
-    for (int i = 0; i <= 180; i += 1)
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
     {
-        float angle = glm::radians(static_cast<float>(i) + 90.0f);
-        bool isMajorTick = (i % 5) == 0;
-        float tickLength = isMajorTick ? 10.0f : 5.0f;
+        const float t = (float)i / tickCount;
+        const float value = minValue + (maxValue - minValue) * t;
+        const float angle = IM_PI * t;
+        const bool isMajorTick = (i % 10) == 0;
+        const float tickLength = isMajorTick ? 10.0f : 5.0f;
 
-        // 计算刻度线位置
-        float cosAngle = cosf(angle);
-        float sinAngle = sinf(angle);
-        ImVec2 innerPoint(center.x + cosAngle * (radius - tickLength), center.y + sinAngle * (radius - tickLength));
-        ImVec2 outerPoint(center.x + cosAngle * radius, center.y + sinAngle * radius);
+        
+        const ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength), center.y - sinf(angle) * (radius - tickLength));
+        const ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius, center.y - sinf(angle) * radius);
 
-        drawList->AddLine(innerPoint, outerPoint, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
+        
+        ImU32 tickColor = isMajorTick ? majorTickColor : minorTickColor;
+        if (t < 0.1f || t > 0.9f)
+            tickColor = edgeWarningColor;
 
-        // 每10°添加数字标注
-        if (isMajorTick && (i % 10) == 0)
+        drawList->AddLine(p1, p2, tickColor, isMajorTick ? 2.0f : 1.0f);
+
+        
+        if (isMajorTick)
         {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", i);
-            ImVec2 textSize = ImGui::CalcTextSize(buf);
-
-            // 文本位置 (向圆心内偏移)
-            ImVec2 textPos(center.x + cosAngle * (radius - 25), center.y + sinAngle * (radius - 25));
-
-            // 调整文本位置避免重叠
-            textPos.x -= textSize.x * 0.5f;
-            textPos.y -= textSize.y * 0.5f;
-
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
+            const ImVec2 textSize = ImGui::CalcTextSize(buf);
+            const ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 25) - textSize.x * 0.5f, center.y - sinf(angle) * (radius - 25) - textSize.y * 0.5f);
             drawList->AddText(textPos, textColor, buf);
         }
     }
 
-    // 经度指针 (转换为半圆角度)
-    float lonAngle = glm::radians(longitude + 90.0f);
-    ImVec2 lonEnd(center.x + cosf(lonAngle) * (radius - 15), center.y + sinf(lonAngle) * (radius - 15));
+    
+    const float needleAngle = ((longitude - minValue) / (maxValue - minValue)) * IM_PI;
+    const ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
 
-    drawList->AddLine(center, lonEnd, needleColor, 3.0f);
-    drawList->AddCircleFilled(lonEnd, 5.0f, needleColor);
+    
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
+
+    
+    drawList->AddLine(ImVec2(center.x + cosf(0) * (radius - 5), center.y - sinf(0) * (radius - 5)), ImVec2(center.x + cosf(0) * radius, center.y - sinf(0) * radius), edgeWarningColor, 2.0f);
+    drawList->AddLine(ImVec2(center.x + cosf(IM_PI) * (radius - 5), center.y - sinf(IM_PI) * (radius - 5)), ImVec2(center.x + cosf(IM_PI) * radius, center.y - sinf(IM_PI) * radius), edgeWarningColor, 2.0f);
 }
 
-// 纬度仪表盘绘制函数 (1/4圆)
-void DrawLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude)
+
+
+
+void DrawLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, double latitude)
 {
-    // 颜色定义
-    ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    //todo. here is will bug after longterm runing
+    //info Expression: vector iterators in range are from different containers
+    std::lock_guard<std::mutex> lock(g_DataMutex);
+    const double EPS = 1e-9;
+    //const double MIN_RANGE = 1e-6; 
+    if (fabs(latitudeCurrentMin - latitudeCurrentMax) < EPS)
+    {
+        latitudeCurrentMin = latitude - 0.02f;
+        latitudeCurrentMax = latitude + 0.02f;
+    }
+
+    
+    AdjustDisplayRange(latitude, latitudeCurrentMin, latitudeCurrentMax);
+     double minValue = latitudeCurrentMin;
+     double maxValue = latitudeCurrentMax;
+
+//      double range = maxValue - minValue;
+//     if (range < MIN_RANGE)
+//     {
+//         double center_val = (minValue + maxValue) / 2.0;
+//         latitudeCurrentMin = center_val - MIN_RANGE / 2.0;
+//         latitudeCurrentMax = center_val + MIN_RANGE / 2.0;
+//         minValue = latitudeCurrentMin;
+//         maxValue = latitudeCurrentMax;
+//         range = MIN_RANGE;
+//     }
+
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(100, 200, 255, 255);      
+    ImU32 edgeWarningColor = IM_COL32(255, 200, 0, 255);   
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
+    {
+        const float t = (float)i / tickCount;
+        const float value = minValue + (maxValue - minValue) * t;
+        const float angle = IM_PI * t;  
+        const bool isMajorTick = (i % 10) == 0;
+        const float tickLength = isMajorTick ? 10.0f : 5.0f;
+
+        
+        const ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength), center.y - sinf(angle) * (radius - tickLength));
+        const ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius, center.y - sinf(angle) * radius);
+
+        
+        ImU32 tickColor = isMajorTick ? majorTickColor : minorTickColor;
+        if (t < 0.1f || t > 0.9f)
+            tickColor = edgeWarningColor;
+
+        drawList->AddLine(p1, p2, tickColor, isMajorTick ? 2.0f : 1.0f);
+
+       
+        if (isMajorTick)
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
+            const ImVec2 textSize = ImGui::CalcTextSize(buf);
+            const ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 30) - textSize.x * 0.5f, center.y - sinf(angle) * (radius - 30) - textSize.y * 0.5f);
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    
+    const float needleAngle = ((latitude - minValue) / (maxValue - minValue)) * IM_PI;
+    const ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
+
+    
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
+
+    
+    drawList->AddLine(ImVec2(center.x + cosf(0) * (radius - 5), center.y - sinf(0) * (radius - 5)), ImVec2(center.x + cosf(0) * radius, center.y - sinf(0) * radius), edgeWarningColor, 2.0f);
+    drawList->AddLine(ImVec2(center.x + cosf(IM_PI) * (radius - 5), center.y - sinf(IM_PI) * (radius - 5)), ImVec2(center.x + cosf(IM_PI) * radius, center.y - sinf(IM_PI) * radius), edgeWarningColor, 2.0f);
+}
+
+
+
+
+
+void DrawDetailLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float longitude)
+{
+    
+    float range = 0.01f;  
+    float minValue = longitude - range;
+    float maxValue = longitude + range;
+
+    //ImU32 ringColor = IM_COL32(80, 150, 255, 255);
+    ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
+    ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
+    ImU32 needleColor = IM_COL32(255, 100, 100, 255);
+    ImU32 textColor = IM_COL32(255, 255, 255, 255);
+
+    
+    //drawList->PathArcTo(center, radius, IM_PI * 0.5f, IM_PI * 1.5f);
+    //drawList->PathStroke(ringColor, false, 2.0f);
+
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
+    {
+        float t = (float)i / tickCount;
+        float value = minValue + (maxValue - minValue) * t;
+
+        float angle =  t * IM_PI;   
+        bool isMajorTick = (i % 10) == 0;
+        float tickLength = isMajorTick ? 10.0f : 5.0f;
+
+        
+        ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength), center.y - sinf(angle) * (radius - tickLength));
+        ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius, center.y - sinf(angle) * radius);
+        drawList->AddLine(p1, p2, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
+
+        
+        if (isMajorTick)
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
+            ImVec2 textSize = ImGui::CalcTextSize(buf);
+            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 25) - textSize.x * 0.5f, center.y - sinf(angle) * (radius - 25) - textSize.y * 0.5f);
+            drawList->AddText(textPos, textColor, buf);
+        }
+    }
+
+    
+    float needleAngle =  ((longitude - minValue) / (maxValue - minValue)) * IM_PI;
+    ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
+}
+
+void DrawDetailLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, float latitude)
+{
+    
+    float range = 0.01f;  
+    float minValue = latitude - range;
+    float maxValue = latitude + range;
+
+    //ImU32 ringColor = IM_COL32(80, 150, 255, 255);
     ImU32 majorTickColor = IM_COL32(200, 200, 200, 220);
     ImU32 minorTickColor = IM_COL32(150, 150, 150, 180);
     ImU32 needleColor = IM_COL32(100, 200, 255, 255);
     ImU32 textColor = IM_COL32(255, 255, 255, 255);
 
-    // 绘制1/4圆 (从0°到90°)
-    drawList->PathArcTo(center, radius, 0.0f, IM_PI * 0.5f);
-    drawList->PathStroke(ringColor, false, 2.0f);
+   
+    //drawList->PathArcTo(center, radius, 0.0f, IM_PI * 0.5f);
+    //drawList->PathStroke(ringColor, false, 2.0f);
 
-    // 精细刻度 (每1°小刻度，每5°大刻度)
-    for (int i = 0; i <= 90; i += 1)
+    const int tickCount = 50;
+    for (int i = 0; i <= tickCount; ++i)
     {
-        float angle = glm::radians(static_cast<float>(i));
-        bool isMajorTick = (i % 5) == 0;
+        float t = (float)i / tickCount;
+        float value = minValue + (maxValue - minValue) * t;
+
+        float angle = IM_PI * t;   
+        bool isMajorTick = (i % 10) == 0;
         float tickLength = isMajorTick ? 10.0f : 5.0f;
 
-        // 计算刻度线位置
-        float cosAngle = cosf(angle);
-        float sinAngle = sinf(angle);
-        ImVec2 innerPoint(center.x + cosAngle * (radius - tickLength), center.y - sinAngle * (radius - tickLength));
-        ImVec2 outerPoint(center.x + cosAngle * radius, center.y - sinAngle * radius);
+        
+        ImVec2 p1 = ImVec2(center.x + cosf(angle) * (radius - tickLength), center.y - sinf(angle) * (radius - tickLength));
+        ImVec2 p2 = ImVec2(center.x + cosf(angle) * radius, center.y - sinf(angle) * radius);
+        drawList->AddLine(p1, p2, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
 
-        drawList->AddLine(innerPoint, outerPoint, isMajorTick ? majorTickColor : minorTickColor, isMajorTick ? 2.0f : 1.0f);
-
-        // 每5°添加数字标注
+        
         if (isMajorTick)
         {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", i);
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.5f", value);
             ImVec2 textSize = ImGui::CalcTextSize(buf);
-
-            // 文本位置 (向圆心内偏移)
-            ImVec2 textPos(center.x + cosAngle * (radius - 30), center.y - sinAngle * (radius - 30));
-
-            // 调整文本位置避免重叠
-            textPos.x -= textSize.x * 0.5f;
-            textPos.y -= textSize.y * 0.5f;
-
+            ImVec2 textPos = ImVec2(center.x + cosf(angle) * (radius - 30) - textSize.x * 0.5f, center.y - sinf(angle) * (radius - 30) - textSize.y * 0.5f);
             drawList->AddText(textPos, textColor, buf);
         }
     }
 
-    // 纬度指针
-    float latAngle = glm::radians(latitude);
-    ImVec2 latEnd(center.x + cosf(latAngle) * (radius - 15), center.y - sinf(latAngle) * (radius - 15));
-
-    drawList->AddLine(center, latEnd, needleColor, 3.0f);
-    drawList->AddCircleFilled(latEnd, 5.0f, needleColor);
+    
+    float needleAngle = ((latitude - minValue) / (maxValue - minValue)) * IM_PI;
+    ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
+    drawList->AddLine(center, needleEnd, needleColor, 3.0f);
+    drawList->AddCircleFilled(needleEnd, 5.0f, needleColor);
 }
+
+
+
 
 
 FRAMEGUI_API int draw_gui()
@@ -313,20 +473,13 @@ FRAMEGUI_API int draw_gui()
 			
 
 		{
-			// history windows 
-			std::lock_guard<std::mutex> lock(g_DataMutex);
-			g_LonHistory.push_back(g_X);
-			g_LatHistory.push_back(g_Y);
-			g_AltHistory.push_back(g_Z);
-			g_FrameCounter++;
-
-			// g_FrameRange is editable
-			while ((int)g_AltHistory.size() > g_FrameRange) {
-				g_AltHistory.erase(g_AltHistory.begin());
-				g_LonHistory.erase(g_LonHistory.begin());
-				g_LatHistory.erase(g_LatHistory.begin());
-			}
-
+ 			// g_FrameRange is editable
+            std::lock_guard<std::mutex> lock(g_DataMutex); 
+ 			while (g_AltHistory.size() > g_FrameRange) {
+ 				g_AltHistory.erase(g_AltHistory.begin());
+ 				g_LonHistory.erase(g_LonHistory.begin());
+ 				g_LatHistory.erase(g_LatHistory.begin());
+ 			}
 		}
 
 
@@ -352,99 +505,262 @@ FRAMEGUI_API int draw_gui()
 					ImGui::TableSetColumnIndex(0);
 					ImGui::Text("Longitude");
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text("%.6f", g_X);
+					ImGui::Text("%.4f ", g_X);
 
 					ImGui::TableNextRow();
 					ImGui::TableSetColumnIndex(0);
 					ImGui::Text("Latitude");
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text("%.6f", g_Y);
+					ImGui::Text("%.4f", g_Y);
 
 					ImGui::TableNextRow();
 					ImGui::TableSetColumnIndex(0);
 					ImGui::Text("Altitude");
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text("%.2f m", g_Z);
+					ImGui::Text("%.4f m", g_Z);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("yaw_dur");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%.4f ", yaw_dur);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("pitch_dur");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%.4f ", pitch_dur);
+
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("roll_dur");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%.4f ", roll_dur);
 
 					ImGui::EndTable();
 				}
 
 				ImGui::Spacing();
-				ImGui::Text("rate: %.1f FPS", ImGui::GetIO().Framerate);
+                ImGui::Text("Receive: %.d Frame in current second", currnetFramePerSecond);
+                ImGui::NewLine();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Frame Rate History");
+                ImGui::Text("Showing last %d seconds frame counts", historyFrameCountPerSecond.size());
+                const int COLUMNS_PER_ROW = 5;   
+                int totalCount = historyFrameCountPerSecond.size();
+               
+                if (totalCount > 0)
+                {
+                    
+                    int totalRows = (totalCount + COLUMNS_PER_ROW - 1) / COLUMNS_PER_ROW;
+
+                    
+                    for (int row = 0; row < totalRows; ++row)
+                    {
+                        
+                        int startIndex = row * COLUMNS_PER_ROW;
+                        int columnsInRow = std::min(COLUMNS_PER_ROW, totalCount - startIndex);
+
+                        
+                        std::string tableId = "FrameHistoryRow" + std::to_string(row);
+                        if (ImGui::BeginTable(tableId.c_str(), columnsInRow, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit))
+                        {
+                            
+                            for (int col = 0; col < columnsInRow; ++col)
+                            {
+                                int dataIndex = startIndex + col;
+                                int age = totalCount - 1 - dataIndex;   
+                                std::string header = age == 0 ? "Now" : ("T-" + std::to_string(age));
+                                ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                            }
+                            ImGui::TableHeadersRow();
+
+                             // todo,how to define error frame with config
+                            ImGui::TableNextRow();
+                            for (int col = 0; col < columnsInRow; ++col)
+                            {
+                                ImGui::TableSetColumnIndex(col);
+                                int frameCount = historyFrameCountPerSecond[startIndex + col];
+                                if (frameCount < 0)
+                                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "%d", frameCount);
+                                else if (frameCount > 60)
+                                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%d", frameCount);
+                                else
+                                    ImGui::Text("%d", frameCount);
+                            }
+
+                            ImGui::EndTable();
+                        }
+ 
+                        ImGui::Spacing();
+                    }
+                }
+                else{
+                    ImGui::Text("No history data available");
+                }
+                ImGui::Separator();
+                ImGui::Text("Error Frames");
+                ImGui::BeginChild("ErrorFramesChild", ImVec2(0, 200), true, ImGuiWindowFlags_HorizontalScrollbar);
+                for (const auto& frame : g_ErrorFrames)
+                {
+                    ImGui::TextUnformatted(frame.c_str());
+                }
+                ImGui::EndChild();
 				ImGui::EndChild();
 			}
 			ImGui::End();
 
-			// right side windows for plot
-			ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
-			if (ImGui::Begin("Altitude Plot", &show_draw_window, ImGuiWindowFlags_MenuBar)) {
-				if (!g_AltHistory.empty()) {
-					struct Funcs {
-						static float RescaleValue(void* data, int idx) {
-							return (*static_cast<std::vector<float>*>(data))[idx];
-						}
-					};
-
-					ImGui::PlotLines(
-						"Altitude (m)",
-						&Funcs::RescaleValue, &g_AltHistory,
-						(int)g_AltHistory.size(),
-						0,
-						nullptr,
-						FLT_MAX, FLT_MAX,
-						ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y * 0.7f)
-					);
-
-					ImGui::Text("Current Altitude: %.2f m", g_Z);
-					ImGui::Text("Frame Count: %d", g_FrameCounter);
-					ImGui::SliderInt("Frame Range", &g_FrameRange, 10, 200, "%d frames");
-				}
-				else {
-					ImGui::Text("Waiting for data...");
-				}
-			}
-			ImGui::End();
 
 
 
 
-			{
+
+           ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(half_width, height * 0.5f), ImGuiCond_Always);
+            if (ImGui::Begin("Altitude Plot", &show_draw_window, ImGuiWindowFlags_MenuBar))
+            {
+                if (!g_AltHistory.empty())
+                {
+                    
+                    float min_alt = *std::min_element(g_AltHistory.begin(), g_AltHistory.end());
+                    float max_alt = *std::max_element(g_AltHistory.begin(), g_AltHistory.end());
+
+                    
+                    const float padding = 0.5f;   
+                    if (max_alt - min_alt < 0.1f)
+                    {
+                        min_alt -= padding;
+                        max_alt += padding;
+                    }
+                    else
+                    {
+                        min_alt -= padding;
+                        max_alt += padding;
+                    }
+
+                    
+                    ImVec2 plot_size(ImGui::GetContentRegionAvail().x *0.9f, ImGui::GetContentRegionAvail().y * 0.7f);   
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 60);                                                  
+
+                   
+                    ImGui::PlotLines("##AltitudePlot",   
+                                     g_AltHistory.data(),
+                                     (int)g_AltHistory.size(),
+                                     0,
+                                     nullptr,
+                                     min_alt,
+                                     max_alt,
+                                     plot_size);
+
+                    
+                    ImVec2 plot_min = ImGui::GetItemRectMin();
+                    ImVec2 plot_max = ImGui::GetItemRectMax();
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+                    
+                    const int y_tick_count = 5;   
+                    for (int i = 0; i <= y_tick_count; ++i)
+                    {
+                        
+                        float ratio = (float)i / y_tick_count;
+                        float y_value = min_alt + (max_alt - min_alt) * (1.0f - ratio);   
+
+                        
+                        float y_pos = plot_min.y + (plot_max.y - plot_min.y) * ratio;
+
+                       
+                        draw_list->AddLine(ImVec2(plot_min.x, y_pos),
+                                           ImVec2(plot_max.x, y_pos),
+                                           IM_COL32(80, 80, 80, 255),   
+                                           1.0f);
+
+                        
+                        char label[32];
+                        snprintf(label, sizeof(label), "%.2f", y_value);
+                        ImVec2 text_size = ImGui::CalcTextSize(label);
+                        draw_list->AddText(ImVec2(plot_min.x - text_size.x - 5, y_pos - text_size.y / 2),
+                                           IM_COL32(255, 255, 255, 255),   
+                                           label);
+                    }
+
+                    
+                    const int x_tick_count = 5;
+                    for (int i = 0; i <= x_tick_count; ++i)
+                    {
+                        float ratio = (float)i / x_tick_count;
+                        int frame_idx = (int)(g_AltHistory.size() * ratio);
+
+                       
+                        float x_pos = plot_min.x + (plot_max.x - plot_min.x) * ratio;
+
+                        
+                        draw_list->AddLine(ImVec2(x_pos, plot_min.y), ImVec2(x_pos, plot_max.y), IM_COL32(80, 80, 80, 255), 1.0f);
+
+                        
+                        char label[32];
+                        snprintf(label, sizeof(label), "%d", frame_idx);
+                        ImVec2 text_size = ImGui::CalcTextSize(label);
+                        draw_list->AddText(ImVec2(x_pos - text_size.x / 2, plot_max.y + 5), IM_COL32(255, 255, 255, 255), label);
+                    }
+
+                    
+
+                    ImGui::NewLine(); 
+                    ImGui::Spacing();
+                    ImGui::Text("Current Altitude: %.4f m", g_Z);
+                    ImGui::Text("Frame Count: %d", g_FrameCounter);
+                    ImGui::SliderInt("Frame Range", &g_FrameRange, 10, 200, "%d frames");
+                }
+                else
+                {
+                    ImGui::Text("Waiting for data...");
+                }
+            }
+            ImGui::End();
 
 
-  
+
+            {
                 ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width, viewport->Pos.y + half_height), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(half_width / 2, half_height), ImGuiCond_Always);
                 if (ImGui::Begin("Longitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
                 {
                     ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
                     ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
-                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
-                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
+                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.5f);
+                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.5f;
 
                     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
-                    DrawLongitudeGauge(draw_list, center, radius, g_X);
-                }
-                ImGui::End();
+                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(0, 0, 0, 255));
 
-               
-                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width *1.5f, viewport->Pos.y + half_height), ImGuiCond_Always);
-          
-               ImGui::SetNextWindowSize(ImVec2(half_width/2, half_height), ImGuiCond_Always);
+                    // Draw Longitude Gauge
+                    DrawLongitudeGauge(draw_list, center, radius, g_X);
+
+                    ImGui::End();
+                }
+            }
+
+            {
+                ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + half_width + half_width / 2, viewport->Pos.y + half_height), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(half_width / 2, half_height), ImGuiCond_Always);
                 if (ImGui::Begin("Latitude", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
                 {
                     ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
                     ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
-                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.7f);
-                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.4f;
+                    ImVec2 center = ImVec2(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.5f);
+                    float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.5f;
 
                     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(20, 20, 20, 255));
+                    draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y), IM_COL32(0, 0, 0, 255));
+
+                    // Draw Latitude Gauge
                     DrawLatitudeGauge(draw_list, center, radius, g_Y);
+
+                    ImGui::End();
                 }
-                ImGui::End();
             }
+
 
 
 
@@ -461,21 +777,7 @@ FRAMEGUI_API int draw_gui()
 			g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-
-
-
-
-
-// 			
-// 			static auto last_frame_time = std::chrono::steady_clock::now();
-// 			auto now = std::chrono::steady_clock::now();
-// 			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
-// 			if (elapsed < 16) { 
-// 				std::this_thread::sleep_for(std::chrono::milliseconds(16 - elapsed));
-// 			}
-// 			last_frame_time = now;
-// 
-// 			
+			
  			g_pSwapChain->Present(1, 0);
 		
 
@@ -584,3 +886,4 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
  
+//bug info vector interators in range are from different containers
