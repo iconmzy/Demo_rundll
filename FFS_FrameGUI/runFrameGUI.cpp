@@ -2,9 +2,9 @@
 #include"framegui.h"
 #include <d3d11.h>
 #include <tchar.h>
-#include "ImGui/imgui_impl_win32.h"
-#include "ImGui/imgui_impl_dx11.h"
-#include "ImGui/imgui.h"
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
+#include <imgui.h>
 #include <algorithm>
 #include <vector>
 #include <string>
@@ -89,7 +89,7 @@ FRAMEGUI_API void UpdateFrameGUI_Data(double x, double y, double z,double yaw, d
 
     
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(current_time - g_CurrentSecondStartTime);
-    double elapsed_seconds = duration.count();
+    double elapsed_seconds = double(duration.count());
 
     
     if (elapsed_seconds >= 1.0)
@@ -102,9 +102,9 @@ FRAMEGUI_API void UpdateFrameGUI_Data(double x, double y, double z,double yaw, d
     currnetFramePerSecond++;
     g_FrameCounter++;
     // history windows
-    g_LonHistory.push_back(g_X);
-    g_LatHistory.push_back(g_Y);
-    g_AltHistory.push_back(g_Z);
+    g_LonHistory.push_back(float(g_X));
+    g_LatHistory.push_back(float(g_Y));
+    g_AltHistory.push_back(float(g_Z));
 }
 
 
@@ -173,7 +173,7 @@ void DrawLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, doubl
     for (int i = 0; i <= tickCount; ++i)
     {
         const float t = (float)i / tickCount;
-        const float value = minValue + (maxValue - minValue) * t;
+        const float value = float(minValue + (maxValue - minValue) * t);
         const float angle = IM_PI * t;
         const bool isMajorTick = (i % 10) == 0;
         const float tickLength = isMajorTick ? 10.0f : 5.0f;
@@ -201,7 +201,7 @@ void DrawLongitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, doubl
     }
 
     
-    const float needleAngle = ((longitude - minValue) / (maxValue - minValue)) * IM_PI;
+    float needleAngle = float(((longitude - minValue) / (maxValue - minValue)) * IM_PI);
     const ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
 
     
@@ -255,7 +255,7 @@ void DrawLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, double
     for (int i = 0; i <= tickCount; ++i)
     {
         const float t = (float)i / tickCount;
-        const float value = minValue + (maxValue - minValue) * t;
+        const float value = float(minValue + (maxValue - minValue) * t);
         const float angle = IM_PI * t;  
         const bool isMajorTick = (i % 10) == 0;
         const float tickLength = isMajorTick ? 10.0f : 5.0f;
@@ -283,7 +283,7 @@ void DrawLatitudeGauge(ImDrawList* drawList, ImVec2 center, float radius, double
     }
 
     
-    const float needleAngle = ((latitude - minValue) / (maxValue - minValue)) * IM_PI;
+     float needleAngle = float(((latitude - minValue) / (maxValue - minValue)) * IM_PI);
     const ImVec2 needleEnd = ImVec2(center.x + cosf(needleAngle) * (radius - 15), center.y - sinf(needleAngle) * (radius - 15));
 
     
@@ -548,7 +548,7 @@ FRAMEGUI_API int draw_gui()
                 ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Frame Rate History");
                 ImGui::Text("Showing last %d seconds frame counts", historyFrameCountPerSecond.size());
                 const int COLUMNS_PER_ROW = 5;   
-                int totalCount = historyFrameCountPerSecond.size();
+                int totalCount = int(historyFrameCountPerSecond.size());
                
                 if (totalCount > 0)
                 {
@@ -886,4 +886,3 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
  
-//bug info vector interators in range are from different containers
